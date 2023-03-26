@@ -1,11 +1,11 @@
-use rust_bpe::{Vocabulary, print_top_n_tokens};
+use rust_bpe::{Vocabulary};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = "./bigdata.txt";
-    let data = file_opener(path);
+    let data = file_to_string(path);
 
     let mut vocab = Vocabulary::new();
 
@@ -20,12 +20,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if learn {
         let encoded = vocab.learn(&data, merges, replacements, cutoff);
-    }
-    // println!("Encoded: {:?}, len: {}", encoded, encoded.len());
 
-    // let mut s = String::new();
-    // vocab.decode(&encoded, &mut s);
-    // println!("Decoded: {:?}, len: {}", s, s.len());
+        println!("Encoded len: {}", encoded.len());
+
+        let mut s = String::new();
+        vocab.decode(&encoded, &mut s);
+        println!("Decoded len: {}", s.len());
+    }
 
     if serialize {
         let encoded: Vec<u8> = bincode::serialize(&vocab).unwrap();
@@ -38,13 +39,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut vocab: Vocabulary = bincode::deserialize(&encoded).unwrap();
         // now use it
         println!("Vocabulary size: {}", vocab.len());
-        print_top_n_tokens(&mut vocab, 100);
     }
 
     Ok(())
 }
 
-fn file_opener(path: &str) -> String {
+fn file_to_string(path: &str) -> String {
     let path = Path::new(path);
     let file = File::open(&path).expect("This should open the file.");
     let mut reader = BufReader::new(file);

@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub type TknId = u32;
-pub type TknDiagram = (TknId, TknId);
+pub type TknDigram = (TknId, TknId);
 pub type TknMaxAmount = TknId;
 
 /// A Token is an enum with two variants: `Unit` and `Composition`.
@@ -119,7 +119,7 @@ impl Vocabulary {
     }
     /// Converts a TknDiagram into a new token and adds it to the vocabulary.
     /// If one of ids in the id pair aren't valid token, it will return None.
-    fn new_id(&mut self, diagram: TknDiagram) -> Option<TknId> {
+    fn new_id(&mut self, diagram: TknDigram) -> Option<TknId> {
         let (idleft, idright) = diagram;
         if let (Some(_), Some(_)) = (self.tkns.get(&idleft), self.tkns.get(&idright)) {
             Some(self.push(Token::Composition(idleft, idright)))
@@ -141,8 +141,9 @@ impl Vocabulary {
         );
         let mut cur_i = 0;
         let mut text: Vec<TknId> = self.preinitialize_vocabulary(data);
+        println!("Text has {} tokens", text.len());
         let mut new_text: Vec<TknId> = vec![];
-        let mut counts: HashMap<TknDiagram, TknMaxAmount> = HashMap::new();
+        let mut counts: HashMap<TknDigram, TknMaxAmount> = HashMap::new();
         for _ in 0..merges {
             if cur_i == merges {
                 break;
@@ -151,6 +152,22 @@ impl Vocabulary {
             let mut top_digrams = top_n_digrams(&counts, replacements, cutoff);
             if top_digrams.is_empty() {
                 break;
+            }
+            if cur_i % 13 == 0 {
+                println!(
+                    "
+\x1B[2J\x1B[1;1HCurrent iteration: {}, number of tokens: {}.
+\nAfter {cur_i} merges, the top {replacements} digrams are {top_digrams:?}",
+                    cur_i,
+                    self.len(),
+                    top_digrams = top_digrams,
+                );
+            } else {
+                println!(
+                    "  Current iteration: {}, number of tokens: {}",
+                    cur_i,
+                    self.len()
+                );
             }
             while let Some(digram) = top_digrams.pop() {
                 let new_id = self.new_id(digram.0);
@@ -168,16 +185,9 @@ impl Vocabulary {
                         }
                     }
                 }
-                let tmp = text;
-                text = new_text;
-                new_text = tmp;
+                std::mem::swap(&mut text, &mut new_text);
                 new_text.clear();
                 cur_i += 1;
-                println!(
-                    "Current iteration: {}, number of tokens: {}",
-                    cur_i,
-                    self.len()
-                );
             }
             counts.clear();
         }
@@ -186,7 +196,7 @@ impl Vocabulary {
 }
 
 /// Counts all the token id pairs if given a hash map and a slice of tokens.
-fn digram_count(text: &[TknId], id_to_count: &mut HashMap<TknDiagram, TknMaxAmount>) {
+fn digram_count(text: &[TknId], id_to_count: &mut HashMap<TknDigram, TknMaxAmount>) {
     for pair in text.windows(2) {
         id_to_count
             .entry((pair[0], pair[1]))
@@ -196,11 +206,11 @@ fn digram_count(text: &[TknId], id_to_count: &mut HashMap<TknDiagram, TknMaxAmou
 }
 /// Return the `n` most common token id pairs in descending order that have a count greater than `min`.
 fn top_n_digrams(
-    diagram_to_count: &HashMap<TknDiagram, TknMaxAmount>,
+    diagram_to_count: &HashMap<TknDigram, TknMaxAmount>,
     n: usize,
     min: TknMaxAmount,
-) -> Vec<(TknDiagram, TknMaxAmount)> {
-    let mut top_n: Vec<(TknDiagram, TknMaxAmount)> = diagram_to_count
+) -> Vec<(TknDigram, TknMaxAmount)> {
+    let mut top_n: Vec<(TknDigram, TknMaxAmount)> = diagram_to_count
         .iter()
         .map(|(diagram, count)| (*diagram, *count))
         .filter(|&(_, count)| count > min)
@@ -208,19 +218,5 @@ fn top_n_digrams(
     top_n.sort_by_key(|&(_, count)| count);
     top_n.reverse();
     top_n.truncate(n);
-    println!("{:?}", top_n);
     top_n
-}
-
-pub fn print_top_n_tokens(vocab: &mut Vocabulary, n: usize) {
-    let ids_clone = vocab.ids.clone();
-    let mut tokens: Vec<&Token> = ids_clone.keys().collect();
-    tokens.sort_by_key(|token| ids_clone.get(token).unwrap());
-    tokens.reverse();
-    for token in tokens.iter().map(|tkn| ids_clone.get(tkn).unwrap()).take(n) {
-        let slice = std::slice::from_ref(token);
-        let mut token_str = String::new();
-        vocab.decode(slice, &mut token_str);
-        println!("{tkn_str:?}", tkn_str = token_str);
-    }
 }
