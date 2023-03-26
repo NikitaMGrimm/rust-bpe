@@ -1,32 +1,57 @@
-use std::{fs::File, io::{BufReader, Read}};
+use rust_bpe::{Vocabulary, print_top_n_tokens};
+use std::fs::File;
+use std::io::{BufReader, Read};
+use std::path::Path;
 
-use rust_bpe::BPE;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let path = "./bigdata.txt";
+    let data = file_opener(path);
 
-fn main() {
+    let mut vocab = Vocabulary::new();
 
-    // Make new BPE object.
-    let mut bpe = BPE::new();
+    let serialize = true;
+    let deserialize = !&serialize;
 
-    // Read training file for vocabulary.
-    let file_path = "../input.txt";
-    let learn_file = File::open(file_path).unwrap();
-    let mut buf_reader = BufReader::new(learn_file);
-    let mut data = String::new();
-    buf_reader.read_to_string(&mut data).unwrap();
+    let learn = serialize;
 
-    // Build vocabulary.
-    let vocabulary = bpe.build(&data);
-    // Optional: 
+    let merges = 100000;
+    let replacements = 1;
+    let cutoff = 1;
 
-    // Read file that needs to be encoded
-    let file_path = "../input.txt";
-    let input_file = File::open(file_path).unwrap();
-    let mut buf_reader = BufReader::new(input_file);
-    let mut data = String::new();
-    buf_reader.read_to_string(&mut data).unwrap();
+    if learn {
+        let encoded = vocab.learn(&data, merges, replacements, cutoff);
+    }
+    // println!("Encoded: {:?}, len: {}", encoded, encoded.len());
 
-    // Encode the data
-    let tokens = bpe.encode(&data, );
+    // let mut s = String::new();
+    // vocab.decode(&encoded, &mut s);
+    // println!("Decoded: {:?}, len: {}", s, s.len());
 
-    let decoded = bpe.decode(&tokens);
+    if serialize {
+        let encoded: Vec<u8> = bincode::serialize(&vocab).unwrap();
+        // save to file called "vocabulary.bincode"
+        std::fs::write("vocabulary.bincode", encoded)?;
+    }
+    // now read it back in
+    if deserialize {
+        let encoded = std::fs::read("./vocabulary/vocabulary.bincode")?;
+        let mut vocab: Vocabulary = bincode::deserialize(&encoded).unwrap();
+        // now use it
+        println!("Vocabulary size: {}", vocab.len());
+        print_top_n_tokens(&mut vocab, 100);
+    }
+
+    Ok(())
+}
+
+fn file_opener(path: &str) -> String {
+    let path = Path::new(path);
+    let file = File::open(&path).expect("This should open the file.");
+    let mut reader = BufReader::new(file);
+
+    let mut input_data = String::new();
+    reader
+        .read_to_string(&mut input_data)
+        .expect("This should read the file.");
+    input_data
 }

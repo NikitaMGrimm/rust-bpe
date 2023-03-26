@@ -21,63 +21,206 @@
 //! rust-bpe = "0.1.0"
 //! ```
 //!
-//! ## Usage
-//!
-//! ```rust
-//! use rust_bpe::BPE;
-//! 
-//! let mut bpe = BPE::new(); 
-//! ```
-//!
-//! ### Compression
-//!
-//! To compress something using BPE, first build the vocabulary.
-//!
-//! ```rust
-//! let learn_file = File::open("input.txt").unwrap();
-//! let mut buf_reader = BufReader::new(learn_file);
-//! let mut data = String::new();
-//! buf_reader.read_to_string(&mut data).unwrap();
-//! let vocabulary = bpe.build(&file);
-//! ```
-//!
-//! Then, use the encode method to encode the file into tokens:
-//!
-//! ```rust
-//! let input_file = File::open("input.txt").unwrap();
-//! let tokens = bpe.encode(&input_file);
-//! ```
-//!
-//! The resulting `tokens` variable will contain the compressed representation of the input file.
-//!
-//! ### Decompression
-//!
-//! To decompress the compressed file back into the original text, use the decode method:
-//!
-//! ```rust
-//! let decoded = bpe.decode(&tokens);
-//! ```
-//!
-//! The decoded variable will now contain the original text.
-//!
-//! ## License
-//!
-//! This Rust BPE library is licensed under the [MIT License](https://opensource.org/licenses/MIT). Feel free to use, modify, and distribute it as you like.
 
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
+pub type TknId = u32;
+pub type TknDiagram = (TknId, TknId);
+pub type TknMaxAmount = TknId;
 
-pub struct BPE;
+/// A Token is an enum with two variants: `Unit` and `Composition`.
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Deserialize, Serialize)]
+pub enum Token {
+    /// A `Unit` consists of an individual character.
+    Unit(char),
+    /// A `Composition` is a composition of two token ids.
+    Composition(TknId, TknId),
+}
 
-pub struct Vocabulary;
+#[derive(Deserialize, Serialize, Debug)]
+pub struct Vocabulary {
+    tkns: HashMap<TknId, Token>,
+    ids: HashMap<Token, TknId>,
+    id_to_string: Option<HashMap<TknId, String>>,
+    size: TknMaxAmount,
+}
 
-impl BPE {
-    pub fn new() -> BPE {
-        BPE
+impl Vocabulary {
+    /// Creates a new vocabulary with no tokens.
+    pub fn new() -> Vocabulary {
+        Vocabulary {
+            tkns: HashMap::new(),
+            ids: HashMap::new(),
+            id_to_string: None,
+            size: 0,
+        }
+    }
+    /// Returns the number of tokens in the vocabulary.
+    pub fn len(&self) -> TknMaxAmount {
+        self.size
+    }
+    /// Pushes a token into the vocabulary and returns its id.
+    pub fn push(&mut self, tkn: Token) -> TknId {
+        let next_id = self.len();
+        let id = self.ids.entry(tkn.clone()).or_insert_with(|| {
+            self.size += 1;
+            next_id
+        });
+        self.tkns.insert(*id, tkn);
+        *id
+    }
+    /// Decodes a token into a string.
+    pub fn decode_single(&self, id: &TknId, s: &mut String) {
+        let tkn = self.tkns.get(id).expect("Token ID should be valid.");
+        match tkn {
+            Token::Unit(ch) => s.push(*ch),
+            Token::Composition(left, right) => {
+                self.decode_single(left, s);
+                self.decode_single(right, s);
+            }
+        }
     }
 
-    pub fn build(&self, data: &String) -> Vocabulary {
-        Vocabulary
+    /// Decodes a sequence of token ids into a string.
+    /// Will skip over unknown ids!
+    pub fn decode(&mut self, ids: &[TknId], s: &mut String) {
+        if self.id_to_string.is_none() {
+            self.id_to_string = Some(
+                self.tkns
+                    .iter()
+                    .map(|(id, _)| {
+                        let mut id_string = String::new();
+                        self.decode_single(id, &mut id_string);
+                        (*id, id_string)
+                    })
+                    .collect(),
+            );
+        }
+        for id in ids {
+            if let Some(id_string) = self.id_to_string.as_ref().unwrap().get(id) {
+                s.push_str(id_string);
+            }
+        }
     }
+    /// Preinitializes the vocabulary with all the individual characters.
+    /// Outputs a vector of token ids that correspond to the characters.
+    fn preinitialize_vocabulary(&mut self, text_data: &str) -> Vec<TknId> {
+        println!(
+            "Preinitializing vocabulary with {} characters",
+            text_data.len()
+        );
+        let mut converted_text = vec![];
+        for c in text_data.chars() {
+            let id = self.push(Token::Unit(c));
+            converted_text.push(id);
+        }
+        converted_text
+    }
+    /// Converts a TknDiagram into a new token and adds it to the vocabulary.
+    /// If one of ids in the id pair aren't valid token, it will return None.
+    fn new_id(&mut self, diagram: TknDiagram) -> Option<TknId> {
+        let (idleft, idright) = diagram;
+        if let (Some(_), Some(_)) = (self.tkns.get(&idleft), self.tkns.get(&idright)) {
+            Some(self.push(Token::Composition(idleft, idright)))
+        } else {
+            None
+        }
+    }
+    /// WIP
+    pub fn learn(
+        &mut self,
+        data: &str,
+        merges: TknMaxAmount,
+        replacements: usize,
+        cutoff: TknMaxAmount,
+    ) -> Vec<TknId> {
+        println!(
+            "Learning BPE with {} merges, {} replacements, and with a cutoff of {}",
+            merges, replacements, cutoff
+        );
+        let mut cur_i = 0;
+        let mut text: Vec<TknId> = self.preinitialize_vocabulary(data);
+        let mut new_text: Vec<TknId> = vec![];
+        let mut counts: HashMap<TknDiagram, TknMaxAmount> = HashMap::new();
+        for _ in 0..merges {
+            if cur_i == merges {
+                break;
+            }
+            digram_count(&text, &mut counts);
+            let mut top_digrams = top_n_digrams(&counts, replacements, cutoff);
+            if top_digrams.is_empty() {
+                break;
+            }
+            while let Some(digram) = top_digrams.pop() {
+                let new_id = self.new_id(digram.0);
+                let new_id = new_id.unwrap();
+                let mut i = 0;
+                while i < text.len() {
+                    match text.get(i..i + 2) {
+                        Some(pair) if (pair[0], pair[1]) == digram.0 => {
+                            new_text.push(new_id);
+                            i += 2;
+                        }
+                        _ => {
+                            new_text.push(text[i]);
+                            i += 1;
+                        }
+                    }
+                }
+                let tmp = text;
+                text = new_text;
+                new_text = tmp;
+                new_text.clear();
+                cur_i += 1;
+                println!(
+                    "Current iteration: {}, number of tokens: {}",
+                    cur_i,
+                    self.len()
+                );
+            }
+            counts.clear();
+        }
+        text
+    }
+}
 
-    pub fn encode(&self, )
+/// Counts all the token id pairs if given a hash map and a slice of tokens.
+fn digram_count(text: &[TknId], id_to_count: &mut HashMap<TknDiagram, TknMaxAmount>) {
+    for pair in text.windows(2) {
+        id_to_count
+            .entry((pair[0], pair[1]))
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
+    }
+}
+/// Return the `n` most common token id pairs in descending order that have a count greater than `min`.
+fn top_n_digrams(
+    diagram_to_count: &HashMap<TknDiagram, TknMaxAmount>,
+    n: usize,
+    min: TknMaxAmount,
+) -> Vec<(TknDiagram, TknMaxAmount)> {
+    let mut top_n: Vec<(TknDiagram, TknMaxAmount)> = diagram_to_count
+        .iter()
+        .map(|(diagram, count)| (*diagram, *count))
+        .filter(|&(_, count)| count > min)
+        .collect();
+    top_n.sort_by_key(|&(_, count)| count);
+    top_n.reverse();
+    top_n.truncate(n);
+    println!("{:?}", top_n);
+    top_n
+}
+
+pub fn print_top_n_tokens(vocab: &mut Vocabulary, n: usize) {
+    let ids_clone = vocab.ids.clone();
+    let mut tokens: Vec<&Token> = ids_clone.keys().collect();
+    tokens.sort_by_key(|token| ids_clone.get(token).unwrap());
+    tokens.reverse();
+    for token in tokens.iter().map(|tkn| ids_clone.get(tkn).unwrap()).take(n) {
+        let slice = std::slice::from_ref(token);
+        let mut token_str = String::new();
+        vocab.decode(slice, &mut token_str);
+        println!("{tkn_str:?}", tkn_str = token_str);
+    }
 }

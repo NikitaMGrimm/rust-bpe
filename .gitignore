@@ -11,3 +11,5 @@ Cargo.lock
 
 # Input test file
 input.txt
+bigdata.txt
+vocabulary.bincode
